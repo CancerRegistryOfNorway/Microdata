@@ -1,6 +1,6 @@
 # Author: Narasimha Raghavan
-# Date: 2024-09-12
-# Version: 1.0
+# Date: 2024-10-06
+# Version: 2.0
 """
 This module contains functions to read, process, create, and validate CSV and metadata 
 files as per the requirements of the Mproject.
@@ -8,22 +8,26 @@ files as per the requirements of the Mproject.
 Functions included:
 - check_csv_symmetry: Ensures CSV files have consistent columns across rows.
 - read_csv_file: Reads a CSV file and returns it as a pandas DataFrame.
+- extract_metadata_filenames: Extracts metadata filenames from the input CSV file.
 - read_metadata_filenames: Reads metadata filenames from a text file.
 - prepare_directory: Prepares or creates a directory for file storage or validation.
 - save_variable_to_csv: Saves CSV variables into separate files for further processing.
 - download_metadata: Downloads metadata from a URL and saves it to the appropriate directory.
 - validate_downloaded_metadata: Validates the downloaded metadata files.
 - validate_created_dataset: Validates the created dataset against metadata specifications.
-"""
+- package_and_encrypt_dataset: Packages and encrypts datasets that 
+successfully pass validation checks of Microdata tools."""
 
 import csv
 import os
 import time
+from pathlib import Path
 import pandas as pd
 import requests
 from microdata_tools import (
     validate_dataset,
     validate_metadata,
+    package_dataset,
 )  # Updated import statement
 from termcolor import colored
 
@@ -109,6 +113,37 @@ def read_csv_file(input_csv_filename, delimiter=";", encoding="utf-8-sig"):
     return None
 
 
+def extract_metadata_filenames(input_csv, output_metadata_file, columns_to_skip):
+    """
+    Extracts the first row (metadata filenames) from the input CSV,
+    skips the specified columns, and writes the remaining filenames to the metadata file.
+    """
+    try:
+        # Read the first row of the input CSV file with explicit encoding
+        with open(input_csv, mode="r", encoding="utf-8-sig") as csv_file:
+            reader = csv.reader(csv_file, delimiter=";")
+            first_row = next(
+                reader
+            )  # Get the first row (header containing metadata filenames)
+
+        # Write the metadata filenames to a new file, skipping specified columns
+        with open(
+            output_metadata_file, mode="w", newline="", encoding="utf-8"
+        ) as metadata_file:
+            writer = csv.writer(metadata_file)
+            for filename in first_row:
+                # Skip the columns in columns_to_skip
+                if filename.strip().lower() not in columns_to_skip:
+                    writer.writerow(
+                        [filename.strip()]
+                    )  # Write each valid filename on a new line
+
+        print(f"Metadata filenames successfully written to {output_metadata_file}")
+
+    except Exception as e:
+        print(f"Error occurred while processing: {e}")
+
+
 def read_metadata_filenames(metadata_filenames_file, encoding="utf-8-sig"):
     """
     Reads the metadata filenames from a file and returns a list.
@@ -146,7 +181,7 @@ def save_variable_to_csv(df, metadata_filenames, number_of_rows, input_directory
             continue
         if filename not in ["sidkrg", "start_time", "stop_time"]:
             # Convert the filename and directory name to uppercase
-            filepath = filename.upper() + ".CSV"
+            filepath = filename.upper() + ".csv"
             directory_name = filename.upper()
 
             if os.path.exists(directory_name):
@@ -189,7 +224,7 @@ def download_metadata(
 
         # Skip certain filenames
         if filename not in ["sidkrg", "start_time", "stop_time"]:
-            metadata_filename = filename.upper() + ".JSON"
+            metadata_filename = filename.upper() + ".json"
             directory_name = os.path.join(input_directory_path, filename.upper())
 
             # Full URL to retrieve metadata
@@ -261,21 +296,65 @@ def validate_created_dataset(metadata_filenames, input_directory_path):
         input_directory_path (str): The directory where the dataset files are located.
 
     Returns:
-        None: Prints the validation results for each dataset.
+        list: A list of valid metadata filenames that passed the validation process.
     """
+    valid_datasets = []
+
     for metadata_filename in metadata_filenames:
         # Perform validation
         validation_errors = validate_dataset(
             metadata_filename.upper(), input_directory=input_directory_path
         )
+
         # Check if there are any validation errors
         if not validation_errors:
             print(colored(f"Dataset for {metadata_filename} looks good", "blue"))
+            valid_datasets.append(metadata_filename)  # Append valid dataset to the list
         else:
             print(colored(f"Dataset for {metadata_filename} :(", "red"))
+
         # Print validation errors, if any
         for error in validation_errors:
             print(f"{metadata_filename}: {error}")
+
+    # Return the list of valid datasets
+    return valid_datasets
+
+
+def package_and_encrypt_dataset(
+    metadata_filenames, rsa_keys_dir, input_directory_path, output_directory_path
+):
+    """
+    Packages and encrypts datasets after they have been validated.
+
+    Args:
+        metadata_filenames (list): A list of metadata filenames to be packaged and encrypted.
+        rsa_keys_dir (Path): Directory containing the RSA public/private keys.
+        input_directory_path (str): Directory where the datasets are located.
+        output_base_dir (str): Base directory where packaged datasets will be saved.
+
+    Returns:
+        None: Packages and encrypts valid datasets and prints the process.
+    """
+    for metadata_filename in metadata_filenames:
+        dataset_dir = os.path.join(input_directory_path, metadata_filename.upper())
+        output_dir = os.path.join(output_directory_path, metadata_filename.upper())
+
+        try:
+            # Create the output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Call the package_dataset function to encrypt and package the dataset
+            package_dataset(
+                rsa_keys_dir=rsa_keys_dir,
+                dataset_dir=Path(dataset_dir),
+                output_dir=Path(output_dir),
+            )
+            print(
+                f"Successfully packaged and encrypted dataset for {metadata_filename}."
+            )
+        except Exception as e:
+            print(f"Error packaging dataset for {metadata_filename}: {e}")
 
 
 def main():
@@ -285,11 +364,13 @@ def main():
 
     The function performs the following tasks:
     1. Checks the symmetry of the CSV file (ensuring all rows have the same number of columns).
-    2. Reads the CSV file and metadata filenames.
-    3. Saves each variable from the CSV into a separate CSV file.
-    4. Downloads metadata in JSON format from a specified URL.
-    5. Validates the downloaded metadata files.
-    6. Validates the created dataset using the metadata.
+    2. Reads the CSV file.
+    3. Extracts metadata filenames from the CSV file.
+    4. Saves each variable from the CSV into a separate CSV file.
+    5. Downloads metadata in JSON format from a specified URL.
+    6. Validates the downloaded metadata files.
+    7. Validates the created dataset using the metadata.
+    8. Packages and encrypts the validated datasets.
 
     Returns:
         None: Prints the process steps and the total execution time.
@@ -297,14 +378,22 @@ def main():
     print("The execution has begun..")
     start = time.perf_counter()
 
-    # Input two CSV files: data and metadata
-    input_csv_filename = "Microdata_real_data.csv"
-    metadata_filenames_file = "MIcrodata_metadata_variables.csv"
+    # Input only one CSV file
+    input_csv_filename = os.getenv("INPUT_VARIABLES_CSV_FILE")
+
+    # Output metadata filenames to a text file
+    metadata_filenames_file = "Microdata_metadata_variables.csv"
+
+    columns_to_skip = {"sidkrg", "start_time", "stop_time"}
+
+    # Extract metadata filenames that are not in columns_to_skip
+    # from the input CSV and write to a metadata file
+    extract_metadata_filenames(
+        input_csv_filename, metadata_filenames_file, columns_to_skip
+    )
 
     # Input the URL for retrieving metadata
-    url_without_metadata_parameter = (
-        "https://metadata-test.kreftregisteret.no/rest/v1/metadata/variable/microdata/"
-    )
+    url_without_metadata_parameter = os.getenv("URL_WITHOUT_METADATA_PARAMETER")
 
     # Check the symmetry of the CSV file:
     # all rows of the data should have the same number of columns
@@ -319,7 +408,9 @@ def main():
     print("Number of rows in the CSV file: ", number_of_rows)
 
     # Prepare the directory for validation
-    input_directory_path = prepare_directory("input_directory")
+    input_directory_path = prepare_directory(os.getenv("INPUT_DIR"))
+
+    output_directory_path = prepare_directory(os.getenv("OUTPUT_DIR"))
 
     # Save each variable to a CSV file
     save_variable_to_csv(df, metadata_filenames, number_of_rows, input_directory_path)
@@ -335,7 +426,20 @@ def main():
     )
 
     # Validate the created dataset and metadata
-    validate_created_dataset(valid_metadata_filenames, input_directory_path)
+    variables_with_valid_dataset = validate_created_dataset(
+        valid_metadata_filenames, input_directory_path
+    )
+
+    # Define paths for RSA keys and output directory
+    rsa_keys_directory = Path(os.getenv("RSA_KEYS_DIR"))
+
+    # Package and encrypt only the validated datasets
+    package_and_encrypt_dataset(
+        variables_with_valid_dataset,
+        rsa_keys_directory,
+        input_directory_path,
+        output_directory_path,
+    )
 
     print(f"Total Duration: {time.perf_counter() - start}")
 
