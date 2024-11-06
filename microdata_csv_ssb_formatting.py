@@ -1,9 +1,9 @@
 # Author: Narasimha Raghavan
-# Date: 2024-10-06
-# Version: 2.0
+# Date: 2024-11-06
+# Version: 3.0
 """
 This module contains functions to read, process, create, and validate CSV and metadata 
-files as per the requirements of the Mproject.
+files as per the requirements of the Microdata 2.0 project.
 
 Functions included:
 - check_csv_symmetry: Ensures CSV files have consistent columns across rows.
@@ -22,51 +22,63 @@ import csv
 import os
 import time
 from pathlib import Path
+from datetime import date
 import pandas as pd
 import requests
-from microdata_tools import (
-    validate_dataset,
-    validate_metadata,
-    package_dataset,
-)  # Updated import statement
+from microdata_tools import validate_dataset, validate_metadata, package_dataset
 from termcolor import colored
+from prettytable import PrettyTable
 
 
+# Define a timing decorator
+def timed(func):
+    """
+    A decorator that records the time taken by a function to execute.
+
+    Args:
+        func (callable): The function to be timed.
+
+    Returns:
+        callable: Wrapped function that returns the original result and execution time.
+    """
+
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()  # Start timing
+        result = func(*args, **kwargs)  # Execute the function
+        elapsed_time = time.perf_counter() - start_time  # Calculate elapsed time
+        return result, elapsed_time  # Return the result and elapsed time
+
+    return wrapper
+
+
+@timed
 def check_csv_symmetry(file_path, delimiter=";", encoding="utf-8-sig"):
     """
     Checks if all rows in a CSV file have the same number of columns as the header.
 
     Args:
         file_path (str): The path to the CSV file.
-        delimiter (str): The delimiter used in the CSV file. Default is ';'.
-        encoding (str): The encoding of the CSV file. Default is 'utf-8-sig'.
+        delimiter (str): The delimiter used in the CSV file.
+        encoding (str): The encoding of the CSV file.
 
     Returns:
-        None: Prints a message whether all rows have the same number of columns
-        or lists the rows with issues.
+        None: Prints a message indicating any column count issues.
     """
-    # Open the file and read lines
     with open(file_path, "r", encoding=encoding) as file:
         lines = file.readlines()
 
-    # Split the first row (header) and check its length
     header = lines[0].strip().split(delimiter)
     header_length = len(header)
     print(f"Number of columns in the header: {header_length}")
 
-    # Flag to track if all rows are aligned
     all_rows_aligned = True
     issues = []
-
-    # Iterate through each row, check column count, and flag any issues
-    for i, line in enumerate(lines, start=1):  # Start from the first row
+    for i, line in enumerate(lines, start=1):
         columns = line.strip().split(delimiter)
         if len(columns) != header_length:
-            # If any row is not aligned, flag it
             all_rows_aligned = False
             issues.append((i, len(columns)))
 
-    # Print results based on the checks
     if all_rows_aligned:
         print("All rows have the same number of columns.")
     else:
@@ -74,22 +86,23 @@ def check_csv_symmetry(file_path, delimiter=";", encoding="utf-8-sig"):
         for issue in issues:
             print(f"Row {issue[0]} has {issue[1]} columns (Expected {header_length})")
 
+    return None  # Explicitly return None to ensure consistent unpacking
 
+
+@timed
 def read_csv_file(input_csv_filename, delimiter=";", encoding="utf-8-sig"):
     """
-    Reads the input CSV file and returns the DataFrame.
-    Handles the Byte Order Mark (BOM) if present.
+    Reads the input CSV file and returns a DataFrame.
 
     Args:
-        input_csv_filename (str): The path to the input CSV file.
-        delimiter (str): The delimiter used in the CSV file. Default is ';'.
-        encoding (str): The encoding of the CSV file. Default is 'utf-8-sig'.
+        input_csv_filename (str): Path to the CSV file.
+        delimiter (str): Delimiter used in the CSV file.
+        encoding (str): Encoding of the CSV file.
 
     Returns:
-        pd.DataFrame or None: Returns a DataFrame if successful, or None if an error occurs.
+        pd.DataFrame: The data as a DataFrame, or None if there's an error.
     """
     try:
-        # Attempt to read the CSV file using the Python engine with potential spaces handled
         df = pd.read_csv(
             input_csv_filename,
             delimiter=delimiter,
@@ -99,230 +112,214 @@ def read_csv_file(input_csv_filename, delimiter=";", encoding="utf-8-sig"):
         )
         print("CSV file read successfully.")
         return df
-    except FileNotFoundError:
-        print(f"Error: File '{input_csv_filename}' not found.")
-    except pd.errors.EmptyDataError:
-        print(f"Error: File '{input_csv_filename}' is empty.")
-    except pd.errors.ParserError:
-        print(
-            f"Error: Parsing error occurred while reading the file '{input_csv_filename}'."
-        )
-    except OSError as e:
-        print(f"An unexpected I/O error occurred: {str(e)}")
-
+    except Exception as e:
+        print(f"Error occurred: {e}")
     return None
 
 
+@timed
 def extract_metadata_filenames(input_csv, output_metadata_file, columns_to_skip):
     """
-    Extracts the first row (metadata filenames) from the input CSV,
-    skips the specified columns, and writes the remaining filenames to the metadata file.
+    Extracts metadata filenames from the input CSV's first row and writes them to the output file.
+
+    Args:
+        input_csv (str): Path to the input CSV file.
+        output_metadata_file (str): Path to the output metadata file.
+        columns_to_skip (set): Set of columns to exclude.
+
+    Returns:
+        None: Writes filenames in lowercase to the specified file.
     """
     try:
-        # Read the first row of the input CSV file with explicit encoding
         with open(input_csv, mode="r", encoding="utf-8-sig") as csv_file:
             reader = csv.reader(csv_file, delimiter=";")
-            first_row = next(
-                reader
-            )  # Get the first row (header containing metadata filenames)
+            first_row = next(reader)
 
-        # Write the metadata filenames to a new file, skipping specified columns
         with open(
             output_metadata_file, mode="w", newline="", encoding="utf-8"
         ) as metadata_file:
             writer = csv.writer(metadata_file)
             for filename in first_row:
-                # Skip the columns in columns_to_skip
                 if filename.strip().lower() not in columns_to_skip:
-                    writer.writerow(
-                        [filename.strip()]
-                    )  # Write each valid filename on a new line
+                    writer.writerow([filename.strip().lower()])
 
         print(f"Metadata filenames successfully written to {output_metadata_file}")
-
     except Exception as e:
         print(f"Error occurred while processing: {e}")
+    return None
 
 
+@timed
 def read_metadata_filenames(metadata_filenames_file, encoding="utf-8-sig"):
     """
-    Reads the metadata filenames from a file and returns a list.
-    Handles BOM if present in the file.
+    Reads metadata filenames from a file and returns them as a list in uppercase.
+
+    Args:
+        metadata_filenames_file (str): Path to the metadata filenames file.
+        encoding (str): Encoding to use when reading.
+
+    Returns:
+        list: List of filenames in uppercase.
     """
     with open(metadata_filenames_file, "r", encoding=encoding) as file:
-        return [line.strip().upper() for line in file.readlines() if line.strip()]
+        filenames = [line.strip().upper() for line in file.readlines() if line.strip()]
+    return filenames
 
 
+@timed
 def prepare_directory(directory):
     """
-    Prepares the directory for validation by creating it if it doesn't exist
-    and returning its absolute path.
+    Prepares a directory by creating it if it doesn't exist.
+
+    Args:
+        directory (str): Path to the directory.
+
+    Returns:
+        str: Absolute path to the directory.
     """
-    if os.path.exists(directory):
-        os.chdir(directory)
-        return os.path.abspath(os.getcwd())
-    else:
-        os.mkdir(directory)
-        os.chdir(directory)
-        return os.path.abspath(os.getcwd())
+    os.makedirs(directory, exist_ok=True)
+    return os.path.abspath(directory)
 
 
-def save_variable_to_csv(df, metadata_filenames, number_of_rows, input_directory_path):
+@timed
+def save_variable_to_csv(df, metadata_filenames, number_of_rows, base_directory):
     """
-    Converts the column names to lowercase and stores each variable in the column
-    as a separate CSV file along with start, stop, and person_id.
+    Saves each variable in the DataFrame as a separate CSV file.
+
+    Args:
+        df (pd.DataFrame): The data as a DataFrame.
+        metadata_filenames (list): List of metadata filenames.
+        number_of_rows (int): Number of rows in the DataFrame.
+        base_directory (str): Base directory for saving CSV files.
+
+    Returns:
+        None: Each variable is saved as a CSV in its own subdirectory.
     """
     for name_index, filename in enumerate(metadata_filenames):
         filename = filename.lower()
         metadata_filenames[name_index] = filename
-        # Ensure the column exists in the DataFrame
+
         if filename not in df.columns:
             print(f"Warning: Column '{filename}' not found in DataFrame. Skipping.")
             continue
-        if filename not in ["sidkrg", "start_time", "stop_time"]:
-            # Convert the filename and directory name to uppercase
-            filepath = filename.upper() + ".csv"
-            directory_name = filename.upper()
-
-            if os.path.exists(directory_name):
-                os.chdir(directory_name)
-            else:
-                os.mkdir(directory_name)
-                os.chdir(directory_name)
+        if filename not in ["s_sidkrg", "start_time", "stop_time"]:
+            filepath = os.path.join(
+                base_directory, filename.upper(), f"{filename.upper()}.csv"
+            )
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
             with open(filepath, "w", encoding="utf-8-sig") as csvfile:
                 writer = csv.writer(csvfile, delimiter=";")
-                # third column needs an empty string since five columns are required.
                 for i in range(number_of_rows):
-                    # Log data for debugging
                     row_data = [
-                        df["sidkrg"].values[i],
-                        df[filename].values[i],  # Use the correct column name
+                        df["s_sidkrg"].values[i],
+                        df[filename].values[i],
                         "",
-                        df["start_time"].values[i],
-                        df["stop_time"].values[i],
+                        date.today(),
+                        "",
                     ]
                     writer.writerow(row_data)
-
-            # Return to the original directory
-            os.chdir(input_directory_path)
+    return None
 
 
+@timed
 def download_metadata(
-    metadata_filenames, url_without_metadata_parameter, input_directory_path
+    metadata_filenames, url_without_metadata_parameter, base_directory
 ):
     """
-    Downloads metadata in JSON format from the given URL and saves it to the appropriate directory.
+    Downloads metadata files from a URL and saves them in the specified directory.
 
     Args:
-        metadata_filenames (list): A list of metadata filenames to be downloaded.
-        url_without_metadata_parameter (str): The base URL to download metadata from.
-        input_directory_path (str): The directory where metadata will be saved.
+        metadata_filenames (list): List of metadata filenames.
+        url_without_metadata_parameter (str): URL to download metadata from.
+        base_directory (str): Directory where metadata will be saved.
+
+    Returns:
+        None: Saves each metadata file as JSON in its respective directory.
     """
-    for _, filename in enumerate(metadata_filenames):
+    for filename in metadata_filenames:
         filename = filename.lower()
-
-        # Skip certain filenames
-        if filename not in ["sidkrg", "start_time", "stop_time"]:
+        if filename not in ["s_sidkrg", "start_time", "stop_time"]:
             metadata_filename = filename.upper() + ".json"
-            directory_name = os.path.join(input_directory_path, filename.upper())
-
-            # Full URL to retrieve metadata
+            directory_name = os.path.join(base_directory, filename.upper())
+            os.makedirs(directory_name, exist_ok=True)
             url_with_metadata_parameter = url_without_metadata_parameter + filename
 
             try:
-                # Fetch the metadata with a 30-second timeout
                 r = requests.get(url_with_metadata_parameter, timeout=30)
-                r.raise_for_status()  # Raise an error if the request failed
-
-                # Create directory if it doesn't exist
-                if not os.path.exists(directory_name):
-                    os.makedirs(directory_name)
-
-                # Save the metadata file in the correct directory
+                r.raise_for_status()
                 file_path = os.path.join(directory_name, metadata_filename)
                 with open(file_path, "wb") as f:
                     f.write(r.content)
-
-                print(
-                    f"Successfully retrieved and saved {metadata_filename} to {directory_name}"
-                )
-
-            except requests.exceptions.Timeout:
-                print(f"Request timed out for URL: {url_with_metadata_parameter}")
-
-            except requests.exceptions.RequestException as e:
-                print(
-                    f"Failed to retrieve metadata from {url_with_metadata_parameter}: {e}"
-                )
+                print(f"Successfully retrieved {metadata_filename}")
+            except Exception as e:
+                print(f"Failed to retrieve metadata: {e}")
+    return None
 
 
-def validate_downloaded_metadata(metadata_filenames, input_directory_path):
+@timed
+def validate_downloaded_metadata(metadata_filenames, base_directory):
     """
     Validates the downloaded metadata files against the specified directory.
 
     Args:
         metadata_filenames (list): A list of metadata filenames to be validated.
-        input_directory_path (str): The directory where the metadata files are located.
+        base_directory (str): The directory where the metadata files are located.
 
     Returns:
-        list: A list of valid metadata filenames that passed the validation process.
+        tuple: (valid_metadata, metadata_with_errors)
+               valid_metadata is a list of metadata files that passed validation.
+               metadata_with_errors is a dictionary with filenames as 
+               keys and error messages as values.
     """
     valid_metadata = []
+    metadata_with_errors = {}
+
     for metadata_filename in metadata_filenames:
-        # Perform validation
         validation_errors = validate_metadata(
-            metadata_filename.upper(), input_directory=input_directory_path
+            metadata_filename.upper(), input_directory=base_directory
         )
-        # Check if there are any validation errors
         if not validation_errors:
-            print(colored(f"Metadata for {metadata_filename} looks good", "green"))
             valid_metadata.append(metadata_filename)
         else:
-            print(colored(f"Invalid metadata for {metadata_filename} :(", "red"))
-        # Print validation errors, if any
-        for error in validation_errors:
-            print(f"{metadata_filename}: {error}")
-    return valid_metadata
+            metadata_with_errors[metadata_filename] = validation_errors
+
+    return valid_metadata, metadata_with_errors
 
 
-def validate_created_dataset(metadata_filenames, input_directory_path):
+@timed
+def validate_created_dataset(metadata_filenames, base_directory):
     """
     Validates the created dataset files against the specified directory.
 
     Args:
         metadata_filenames (list): A list of metadata filenames whose
         corresponding datasets need validation.
-        input_directory_path (str): The directory where the dataset files are located.
+        base_directory (str): The directory where the dataset files are located.
 
     Returns:
-        list: A list of valid metadata filenames that passed the validation process.
+        tuple: (valid_datasets, datasets_with_errors)
+               valid_datasets is a list of datasets that passed validation.
+               datasets_with_errors is a dictionary with filenames as keys and error messages as values.
     """
     valid_datasets = []
+    datasets_with_errors = {}
 
     for metadata_filename in metadata_filenames:
-        # Perform validation
         validation_errors = validate_dataset(
-            metadata_filename.upper(), input_directory=input_directory_path
+            metadata_filename.upper(), input_directory=base_directory
         )
-
-        # Check if there are any validation errors
         if not validation_errors:
-            print(colored(f"Dataset for {metadata_filename} looks good", "blue"))
-            valid_datasets.append(metadata_filename)  # Append valid dataset to the list
+            valid_datasets.append(metadata_filename)
         else:
-            print(colored(f"Dataset for {metadata_filename} :(", "red"))
+            datasets_with_errors[metadata_filename] = validation_errors
 
-        # Print validation errors, if any
-        for error in validation_errors:
-            print(f"{metadata_filename}: {error}")
-
-    # Return the list of valid datasets
-    return valid_datasets
+    return valid_datasets, datasets_with_errors
 
 
+@timed
 def package_and_encrypt_dataset(
-    metadata_filenames, rsa_keys_dir, input_directory_path, output_directory_path
+    metadata_filenames, rsa_keys_dir, base_directory, output_directory
 ):
     """
     Packages and encrypts datasets after they have been validated.
@@ -330,118 +327,138 @@ def package_and_encrypt_dataset(
     Args:
         metadata_filenames (list): A list of metadata filenames to be packaged and encrypted.
         rsa_keys_dir (Path): Directory containing the RSA public/private keys.
-        input_directory_path (str): Directory where the datasets are located.
-        output_base_dir (str): Base directory where packaged datasets will be saved.
+        base_directory (str): Directory where the datasets are located.
+        output_directory (str): Base directory where packaged datasets will be saved.
 
     Returns:
-        None: Packages and encrypts valid datasets and prints the process.
+        tuple: (successful_packages, failed_packages)
+               successful_packages is a list of datasets that were successfully packaged.
+               failed_packages is a dictionary with filenames as keys and error messages as values.
     """
+    successful_packages = []
+    failed_packages = {}
+
     for metadata_filename in metadata_filenames:
-        dataset_dir = os.path.join(input_directory_path, metadata_filename.upper())
-        output_dir = os.path.join(output_directory_path, metadata_filename.upper())
+        dataset_dir = os.path.join(base_directory, metadata_filename.upper())
+        output_dir = os.path.join(output_directory, metadata_filename.upper())
 
         try:
-            # Create the output directory if it doesn't exist
             os.makedirs(output_dir, exist_ok=True)
-
-            # Call the package_dataset function to encrypt and package the dataset
             package_dataset(
                 rsa_keys_dir=rsa_keys_dir,
                 dataset_dir=Path(dataset_dir),
                 output_dir=Path(output_dir),
             )
-            print(
-                f"Successfully packaged and encrypted dataset for {metadata_filename}."
-            )
+            successful_packages.append(metadata_filename)
         except Exception as e:
-            print(f"Error packaging dataset for {metadata_filename}: {e}")
+            failed_packages[metadata_filename] = str(e)
+
+    return successful_packages, failed_packages
 
 
 def main():
-    """
-    Main function that coordinates the reading, processing, saving, and validation
-    of CSV and metadata files.
+    """Main function that coordinates validation and displays a final summary."""
+    timings = []
 
-    The function performs the following tasks:
-    1. Checks the symmetry of the CSV file (ensuring all rows have the same number of columns).
-    2. Reads the CSV file.
-    3. Extracts metadata filenames from the CSV file.
-    4. Saves each variable from the CSV into a separate CSV file.
-    5. Downloads metadata in JSON format from a specified URL.
-    6. Validates the downloaded metadata files.
-    7. Validates the created dataset using the metadata.
-    8. Packages and encrypts the validated datasets.
-
-    Returns:
-        None: Prints the process steps and the total execution time.
-    """
-    print("The execution has begun..")
-    start = time.perf_counter()
-
-    # Input only one CSV file
+    # Load environment variables
     input_csv_filename = os.getenv("INPUT_VARIABLES_CSV_FILE")
-
-    # Output metadata filenames to a text file
+    rsa_keys_directory = Path(os.getenv("RSA_KEYS_DIR"))
+    base_directory = os.getenv("INPUT_DIR")
+    output_directory = os.getenv("OUTPUT_DIR")
     metadata_filenames_file = "Microdata_metadata_variables.csv"
+    url_without_metadata_parameter = os.getenv("URL_WITHOUT_METADATA_PARAMETER")
+    columns_to_skip = {"s_sidkrg", "start_time", "stop_time"}
 
-    columns_to_skip = {"sidkrg", "start_time", "stop_time"}
-
-    # Extract metadata filenames that are not in columns_to_skip
-    # from the input CSV and write to a metadata file
-    extract_metadata_filenames(
+    # Run each function and store its result and timing
+    _, duration = extract_metadata_filenames(
         input_csv_filename, metadata_filenames_file, columns_to_skip
     )
+    timings.append(("Extract Metadata Filenames", duration))
 
-    # Input the URL for retrieving metadata
-    url_without_metadata_parameter = os.getenv("URL_WITHOUT_METADATA_PARAMETER")
+    _, duration = check_csv_symmetry(input_csv_filename)
+    timings.append(("Check CSV Symmetry", duration))
 
-    # Check the symmetry of the CSV file:
-    # all rows of the data should have the same number of columns
-    check_csv_symmetry(input_csv_filename)
+    df, duration = read_csv_file(input_csv_filename)
+    timings.append(("Read CSV File", duration))
 
-    # Read the CSV file and metadata filenames
-    df = read_csv_file(input_csv_filename)
-    metadata_filenames = read_metadata_filenames(metadata_filenames_file)
+    metadata_filenames, duration = read_metadata_filenames(metadata_filenames_file)
+    timings.append(("Read Metadata Filenames", duration))
 
-    # Get the total number of rows in the CSV file
-    number_of_rows = df.shape[0]
-    print("Number of rows in the CSV file: ", number_of_rows)
+    input_directory_path, duration = prepare_directory(base_directory)
+    timings.append(("Prepare Input Directory", duration))
 
-    # Prepare the directory for validation
-    input_directory_path = prepare_directory(os.getenv("INPUT_DIR"))
+    output_directory_path, duration = prepare_directory(output_directory)
+    timings.append(("Prepare Output Directory", duration))
 
-    output_directory_path = prepare_directory(os.getenv("OUTPUT_DIR"))
+    _, duration = save_variable_to_csv(
+        df, metadata_filenames, df.shape[0], input_directory_path
+    )
+    timings.append(("Save Variable to CSV", duration))
 
-    # Save each variable to a CSV file
-    save_variable_to_csv(df, metadata_filenames, number_of_rows, input_directory_path)
-
-    # Download metadata in JSON format
-    download_metadata(
+    _, duration = download_metadata(
         metadata_filenames, url_without_metadata_parameter, input_directory_path
     )
+    timings.append(("Download Metadata", duration))
 
-    # Validate the downloaded metadata
-    valid_metadata_filenames = validate_downloaded_metadata(
+    # Validate downloaded metadata and capture timing
+    (valid_metadata, metadata_with_errors), duration = validate_downloaded_metadata(
         metadata_filenames, input_directory_path
     )
+    timings.append(("Validate Downloaded Metadata", duration))
 
-    # Validate the created dataset and metadata
-    variables_with_valid_dataset = validate_created_dataset(
-        valid_metadata_filenames, input_directory_path
+    # Validate created datasets and capture timing
+    (valid_datasets, datasets_with_errors), duration = validate_created_dataset(
+        valid_metadata, input_directory_path
     )
+    timings.append(("Validate Created Dataset", duration))
 
-    # Define paths for RSA keys and output directory
-    rsa_keys_directory = Path(os.getenv("RSA_KEYS_DIR"))
-
-    # Package and encrypt only the validated datasets
-    package_and_encrypt_dataset(
-        variables_with_valid_dataset,
-        rsa_keys_directory,
-        input_directory_path,
-        output_directory_path,
+    # Package and encrypt datasets and capture timing
+    (successful_packages, failed_packages), duration = package_and_encrypt_dataset(
+        valid_datasets, rsa_keys_directory, input_directory_path, output_directory_path
     )
+    timings.append(("Package and Encrypt Dataset", duration))
 
-    print(f"Total Duration: {time.perf_counter() - start}")
+    # Final summary of metadata and dataset validation errors
+    print("\nFinal Validation Summary:")
+
+    if metadata_with_errors:
+        print("\nMetadata Validation Errors:")
+        for filename, errors in metadata_with_errors.items():
+            print(colored(f"{filename}:", "red"))
+            for error in errors:
+                print(f"  - {error}")
+    else:
+        print("All metadata files passed validation.")
+
+    if datasets_with_errors:
+        print("\nDataset Validation Errors:")
+        for filename, errors in datasets_with_errors.items():
+            print(colored(f"{filename}:", "red"))
+            for error in errors:
+                print(f"  - {error}")
+    else:
+        print("All dataset files passed validation.")
+
+    # Summary of packaging results
+    print("\nPackage and Encryption Summary:")
+    if successful_packages:
+        print("Successfully Packaged Datasets:")
+        for filename in successful_packages:
+            print(f"  - {filename}")
+    if failed_packages:
+        print("\nFailed to Package Datasets:")
+        for filename, error in failed_packages.items():
+            print(f"  - {filename}: {error}")
+
+    # Display timing statistics and calculate total time
+    table = PrettyTable(["Function", "Time (seconds)"])
+    total_time = sum(timing for _, timing in timings)  # Sum of all durations
+    for name, timing in timings:
+        table.add_row([name, f"{timing:.4f}"])
+
+    print("\nPerformance Timing Statistics:")
+    print(table)
+    print(f"\nTotal Execution Time: {total_time:.4f} seconds")
 
 
 if __name__ == "__main__":
