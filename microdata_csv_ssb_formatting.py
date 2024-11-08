@@ -1,6 +1,6 @@
 # Author: Narasimha Raghavan
 # Date: 2024-11-06
-# Version: 3.0
+# Version: 3.1
 """
 This module contains functions to read, process, create, and validate CSV and metadata 
 files as per the requirements of the Microdata 2.0 project.
@@ -109,6 +109,8 @@ def read_csv_file(input_csv_filename, delimiter=";", encoding="utf-8-sig"):
             encoding=encoding,
             engine="python",
             skipinitialspace=True,
+            dtype=str,
+            na_filter=False,
         )
         print("CSV file read successfully.")
         return df
